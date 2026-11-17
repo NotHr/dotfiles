@@ -1,0 +1,323 @@
+storage:
+  type: sqlite
+  path: /data/gatus.db
+
+ui:
+  title: "status · nothr.in"
+  description: "Live health of every nothr.in service"
+  header: "nothr.in"
+  dashboard-heading: "Status"
+  dashboard-subheading: "every service, probed every five minutes"
+  custom-css: |
+    footer { display: none; }
+    #gatus-uptime-banner {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+      padding: 0.375rem 0.75rem;
+      border: 1px solid hsl(var(--border));
+      border-radius: 0.5rem;
+      background-color: hsl(var(--card));
+      font-size: 0.875rem;
+      line-height: 1.25rem;
+    }
+    #gatus-uptime-banner .label { color: hsl(var(--muted-foreground)); }
+    #gatus-uptime-banner .value {
+      font-size: 1.125rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: hsl(var(--muted-foreground));
+    }
+    #gatus-uptime-banner .count { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+    #gatus-uptime-banner[data-health="good"] .value { color: #16a34a; }
+    #gatus-uptime-banner[data-health="warn"] .value { color: #d97706; }
+    #gatus-uptime-banner[data-health="bad"] .value { color: #dc2626; }
+
+alerting:
+  discord:
+    webhook-url: ${discord_webhook}
+    title: ":helmet_with_white_cross: nothr.in"
+    default-alert:
+      description: "healthcheck failed"
+      send-on-resolved: true
+      failure-threshold: 2
+      success-threshold: 2
+
+
+endpoints:
+  - name: home
+    group: web
+    url: "https://home.nothr.in/health"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: auth
+    group: web
+    url: "https://auth.nothr.in/api/health"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[RESPONSE_TIME] < 3000"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: admin
+    group: web
+    url: "https://admin.nothr.in/health"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: metrics
+    group: web
+    url: "https://metrics.nothr.in/api/health"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: dns
+    group: web
+    url: "https://dns.nothr.in/control/status"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*\"protection_enabled\"*)"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: media
+    group: media
+    url: "https://media.nothr.in/health"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: requests
+    group: media
+    url: "https://requests.nothr.in/api/v1/status"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*\"version\"*)"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: keep
+    group: apps
+    url: "https://keep.nothr.in/api/health"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: note
+    group: apps
+    url: "https://note.nothr.in/_up"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 401"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: pdf
+    group: apps
+    url: "https://pdf.nothr.in/"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: search
+    group: apps
+    url: "https://search.nothr.in/healthz"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: has
+    group: apps
+    url: "https://has.nothr.in/manifest.json"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*Home automation platform*)"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: tangled
+    group: apps
+    url: "https://tangled.nothr.in/"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: radarr
+    group: arr
+    url: "https://radarr.nothr.in/ping"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*OK*)"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: sonarr
+    group: arr
+    url: "https://sonarr.nothr.in/ping"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*OK*)"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: prowlarr
+    group: arr
+    url: "https://prowlarr.nothr.in/ping"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[BODY] == pat(*OK*)"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: torrent
+    group: arr
+    url: "https://torrent.nothr.in/"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 200"
+      - "[CERTIFICATE_EXPIRATION] > 240h"
+
+  - name: wan
+    group: network
+    url: "https://www.google.com/generate_204"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 2
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[STATUS] == 204"
+      - "[RESPONSE_TIME] < 3000"
+
+  - name: adguard-dns
+    group: network
+    url: "100.113.199.45:53"
+    dns:
+      query-name: "home.nothr.in"
+      query-type: "A"
+    interval: 5m
+    alerts:
+      - type: discord
+        failure-threshold: 1
+        success-threshold: 2
+        send-on-resolved: true
+        description: "healthcheck failed"
+    conditions:
+      - "[DNS_RCODE] == NOERROR"
+      - "[RESPONSE_TIME] < 1000"

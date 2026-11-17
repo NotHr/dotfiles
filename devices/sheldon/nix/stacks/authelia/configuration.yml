@@ -1,0 +1,97 @@
+server:
+  address: 'tcp://127.0.0.1:9091'
+
+log:
+  level: 'info'
+
+theme: 'dark'
+
+identity_validation:
+  reset_password:
+    jwt_secret: '@JWT_SECRET@'
+
+identity_providers:
+  oidc:
+    hmac_secret: '@OIDC_HMAC_SECRET@'
+    jwks:
+      - key_id: 'main'
+        algorithm: 'RS256'
+        use: 'sig'
+        key: "@OIDC_ISSUER_PRIVATE_KEY@"
+    enable_client_debug_messages: false
+    enforce_pkce: 'public_clients_only'
+    claims_policies:
+      jellyfin:
+        id_token:
+          - 'groups'
+          - 'email'
+          - 'email_verified'
+          - 'preferred_username'
+          - 'name'
+@OIDC_POLICIES@
+    clients:
+      - client_id: 'jellyfin'
+        client_name: 'Jellyfin'
+        client_secret: '@JELLYFIN_CLIENT_SECRET@'
+        public: false
+        authorization_policy: 'jellyfin'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'https://media.nothr.in/sso/OIDC/Callback/authelia'
+        scopes:
+          - 'openid'
+          - 'profile'
+          - 'email'
+          - 'groups'
+        response_types:
+          - 'code'
+        grant_types:
+          - 'authorization_code'
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+        claims_policy: 'jellyfin'
+
+authentication_backend:
+  password_reset:
+    disable: true
+  ldap:
+    address: 'ldap://127.0.0.1:3890'
+    timeout: '5s'
+    base_dn: 'dc=karthihegde,dc=dev'
+    user: 'uid=admin,ou=people,dc=karthihegde,dc=dev'
+    password: '@LLDAP_PASSWORD@'
+    additional_users_dn: 'ou=people'
+    additional_groups_dn: 'ou=groups'
+    users_filter: '(&({username_attribute}={input})(objectClass=person))'
+    groups_filter: '(&(member={dn})(objectClass=groupOfNames))'
+
+webauthn:
+  enable_passkey_login: true
+  display_name: 'nothr.in'
+  selection_criteria:
+    attachment: platform
+    discoverability: preferred
+    user_verification: preferred
+
+session:
+  name: 'authelia_session'
+  secret: '@SESSION_SECRET@'
+  expiration: '1h'
+  inactivity: '5m'
+  remember_me: '1M'
+  cookies:
+    - domain: 'nothr.in'
+      authelia_url: 'https://auth.nothr.in'
+
+storage:
+  encryption_key: '@STORAGE_ENCRYPTION_KEY@'
+  local:
+    path: /config/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+
+@ACCESS_CONTROL@

@@ -1,0 +1,173 @@
+# Caddy was a host systemd service on the old box (/etc/caddy/Caddyfile), not a
+# container, so it stays a service here. Ports 80/443 are not reachable from the
+# internet, so certificates come from ACME DNS-01 through Cloudflare — that
+# needs the caddy-dns/cloudflare plugin built into caddy.
+{ config, lib, pkgs, ... }:
+
+let
+  auth = ''
+    (auth) {
+      forward_auth 127.0.0.1:9091 {
+        uri /api/authz/forward-auth
+        copy_headers Remote-User Remote-Groups Remote-Name Remote-Email
+        header_up -Authorization
+      }
+    }
+  '';
+
+  # Authelia SSO lands first, then Caddy hands AdGuard its own credential, so
+  # the AdGuard login form never appears. The value reaches caddy through
+  # systemd's EnvironmentFile (read as root) rather than an imported file:
+  # /run/secrets/rendered is root-only and caddy runs as the caddy user.
+in
+{
+  sops.secrets."adguardhome/basic_auth" = {
+    sopsFile = ../secrets/adguardhome.yaml;
+    key = "basic_auth";
+    mode = "0400";
+  };
+
+  sops.templates."caddy-adguard.env".restartUnits = [ "caddy.service" ];
+
+  sops.templates."caddy-adguard.env".content = ''
+    ADGUARD_BASIC_AUTH="${config.sops.placeholder."adguardhome/basic_auth"}"
+  '';
+
+  services.caddy = {
+    enable = true;
+    package = pkgs.caddy.withPlugins {
+      plugins = [
+        "github.com/caddy-dns/cloudflare@v0.2.2"
+        "github.com/caddyserver/replace-response@v0.0.0-20250618171559-80962887e4c6"
+      ];
+      hash = "sha256-rhWH7CeYggUAoxRWXHX77cKw/Zz2bc5rCb4nEbMjhyY=";
+    };
+
+    # CF_API_TOKEN comes from sops: devices/sheldon/nix/secrets/caddy.env;
+    # ADGUARD_BASIC_AUTH is the rendered template next to it
+    environmentFile = config.sops.secrets."caddy".path;
+
+    globalConfig = ''
+      admin unix//run/caddy/admin.sock
+      grace_period 30s
+      acme_dns cloudflare {
+        api_token {env.CF_API_TOKEN}
+      }
+    '';
+
+    # the `import auth` snippet the Caddyfile used
+    extraConfig = auth;
+
+    virtualHosts = {
+      "note.nothr.in".extraConfig = "reverse_proxy 127.0.0.1:5984";
+
+      "dns.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:3000 {
+          header_up Authorization "{$ADGUARD_BASIC_AUTH}"
+        }
+      '';
+
+      "keep.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:8095 {
+          header_up Remote-User shiori
+        }
+      '';
+      "pdf.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:8069
+      '';
+      "media.nothr.in".extraConfig = ''
+        @plainRoot {
+          path /
+          not header Referer */sso/OIDC/Callback/*
+        }
+        redir @plainRoot /sso/OIDC/Start/authelia 302
+        reverse_proxy 127.0.0.1:8096
+      '';
+      "requests.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:5055
+      '';
+      # the dashboard is the container's index.html with one extra script: it
+      # totals the 30d uptime of every endpoint and prints it under the heading.
+      # identity encoding only for the document, or the SPA's js/css would be
+      # proxied uncompressed to feed the text replacement.
+      "home.nothr.in".extraConfig = ''
+        handle /uptime.js {
+          root * ${./gatus}
+          header Cache-Control "no-cache"
+          file_server
+        }
+        handle / {
+          replace "</body>" "<script src=\"/uptime.js\" defer></script></body>"
+          reverse_proxy 127.0.0.1:8390 {
+            header_up Accept-Encoding identity
+          }
+        }
+        handle {
+          reverse_proxy 127.0.0.1:8390
+        }
+      '';
+
+      "auth.nothr.in".extraConfig = "reverse_proxy 127.0.0.1:9091";
+      "search.nothr.in".extraConfig = "reverse_proxy 127.0.0.1:6996";
+
+      "radarr.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:7878
+      '';
+
+      "sonarr.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:8989
+      '';
+
+      "prowlarr.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:9696
+      '';
+
+      # qbittorrent lives in the media stack's VPN sidecar, which publishes its
+      # webui on the host's loopback — no need to reach across the tailnet
+      "torrent.nothr.in".extraConfig = ''
+        import auth
+        reverse_proxy 127.0.0.1:8080
+      '';
+
+      "has.nothr.in".extraConfig = ''
+        reverse_proxy 127.0.0.1:8123 {
+          header_up Host {host}
+          header_up X-Real-IP {remote_host}
+          header_up X-Forwarded-For {remote_host}
+          header_up X-Forwarded-Proto "https"
+        }
+      '';
+    };
+  };
+
+  # every stack publishes on 127.0.0.1 and caddy is the only way in from the
+  # LAN or the tailnet, so the port lists that used to live here are gone;
+  # firewall.nix holds the policy
+
+  systemd.tmpfiles.rules = [
+    "d /run/caddy 0750 caddy caddy -"
+    "d /var/lib/stacks/caddy 0755 root root -"
+  ];
+
+  # two env files: the CF token and the AdGuard credential
+  systemd.services.caddy.serviceConfig.EnvironmentFile = lib.mkForce [
+    config.sops.secrets."caddy".path
+    config.sops.templates."caddy-adguard.env".path
+  ];
+
+  # the package's own unit is installed as the fragment (systemd.packages), and
+  # it carries a reload against /etc/caddy/Caddyfile, which does not exist here.
+  # the first empty string resets that list; without it the stale command runs
+  # first, fails, and the whole activation rolls back
+  systemd.services.caddy.serviceConfig.ExecReload = lib.mkForce [
+    ""
+    "${config.services.caddy.package}/bin/caddy reload --config ${config.services.caddy.configFile} --adapter caddyfile --address unix//run/caddy/admin.sock --force"
+  ];
+}

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <Providers>
+    <OidcProviderConfig>
+      <ProviderId>authelia</ProviderId>
+      <DisplayName>Authelia</DisplayName>
+      <Authority>https://auth.nothr.in</Authority>
+      <ClientId>jellyfin</ClientId>
+      <ClientSecretFile>/run/secrets/jellyfin/client_secret</ClientSecretFile>
+      <Scopes>openid profile email groups</Scopes>
+      <RoleClaim>groups</RoleClaim>
+      <UsernameClaim>preferred_username</UsernameClaim>
+      <DisplayNameClaim>name</DisplayNameClaim>
+      <EmailClaim>email</EmailClaim>
+      <EmailVerifiedClaim>email_verified</EmailVerifiedClaim>
+      <SyncDisplayName>true</SyncDisplayName>
+      <SyncProfileImage>false</SyncProfileImage>
+      <Enabled>true</Enabled>
+      <StrictAccessTokenValidation>true</StrictAccessTokenValidation>
+      <PinnedAuthority>https://auth.nothr.in</PinnedAuthority>
+      <PinnedIssuer>https://auth.nothr.in</PinnedIssuer>
+      <PinnedTokenEndpoint>https://auth.nothr.in/api/oidc/token</PinnedTokenEndpoint>
+      <PinnedJwksUri>https://auth.nothr.in/jwks.json</PinnedJwksUri>
+      <PinnedUserInfoEndpoint>https://auth.nothr.in/api/oidc/userinfo</PinnedUserInfoEndpoint>
+      <PinnedAuthorizeEndpoint>https://auth.nothr.in/api/oidc/authorization</PinnedAuthorizeEndpoint>
+    </OidcProviderConfig>
+  </Providers>
+  <RoleMappings>
+    <RoleMapping>
+      <RoleName>jellyfin_users</RoleName>
+      <IsAdmin>false</IsAdmin>
+      <EnableAllLibraries>true</EnableAllLibraries>
+    </RoleMapping>
+    <RoleMapping>
+      <RoleName>admins</RoleName>
+      <IsAdmin>true</IsAdmin>
+      <EnableAllLibraries>true</EnableAllLibraries>
+    </RoleMapping>
+  </RoleMappings>
+  <AutoCreateUsers>true</AutoCreateUsers>
+  <AllowedGroups>
+    <string>jellyfin_users</string>
+    <string>admins</string>
+  </AllowedGroups>
+  <ServerBaseUrl>https://media.nothr.in</ServerBaseUrl>
+</PluginConfiguration>

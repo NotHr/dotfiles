@@ -1,0 +1,15 @@
+# Nix build outputs
+/result
+/result-*
+
+# Local backups
+/backups/
+
+# Editor temporary files
+*~
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db

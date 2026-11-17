@@ -1,0 +1,21 @@
+{ ... }:
+{
+  imports = [
+    ./hardware-configuration.nix
+
+    ../../modules/system/boot.nix
+    ../../modules/system/networking.nix
+    ../../modules/system/security.nix
+    ../../modules/system/locale.nix
+    ../../modules/system/users.nix
+    ../../modules/system/nix.nix
+
+    ../../modules/desktop
+    ../../modules/services/mullvad.nix
+  ];
+
+  networking.hostName = "notebook";
+
+  # Preserve this value across upgrades.
+  system.stateVersion = "26.05";
+}

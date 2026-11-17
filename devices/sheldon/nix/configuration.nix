@@ -1,0 +1,372 @@
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
+
+{
+  imports = [
+    ./firewall.nix
+    ./hardware.nix
+    ./stacks
+  ];
+
+  # every stack runs rootful (system-level) podman: adguardhome needs :53.
+  # nixpkgs creates the default network with dns_enabled = false, so containers
+  # cannot resolve each other by name — every stack that talks to a sibling
+  # relies on this
+  virtualisation.podman = {
+    enable = true;
+    defaultNetwork.settings.dns_enabled = true;
+    dockerSocket.enable = true;
+  };
+  virtualisation.oci-containers.backend = "podman";
+
+  # On a first activation the podman units start before systemd-tmpfiles has
+  # created /var/lib/stacks/**, so each container dies with
+  # "statfs <path>: no such file or directory" and hits start-limit-hit. Create
+  # every bind-mount source in the unit itself; named volumes are podman's job.
+  # Sources that already exist are left alone: some are not directories at all
+  # (/run/podman/podman.sock, /etc/localtime), and mkdir -p fails on those.
+  systemd.services = lib.mapAttrs' (
+    name: container:
+    lib.nameValuePair "podman-${name}" {
+      preStart = lib.concatMapStringsSep "\n" (
+        volume:
+        let
+          host = lib.head (lib.splitString ":" volume);
+        in
+        lib.optionalString (lib.hasPrefix "/" host)
+          "[ -e ${lib.escapeShellArg host} ] || mkdir -p ${lib.escapeShellArg host}"
+      ) container.volumes;
+    }
+  ) config.virtualisation.oci-containers.containers
+  // {
+    # systemd deletes RuntimeDirectory=/run/tailscale when a unit stops, and on
+    # a restart that deletion can land *after* the new daemon has bound its
+    # socket, leaving tailscaled running with no control socket
+    tailscaled.serviceConfig.RuntimeDirectoryPreserve = "yes";
+
+    # the media stack's container is itself named "tailscale", and nixpkgs
+    # gives every container RuntimeDirectory=/run/<name> — the same path the
+    # daemon keeps its control socket in, so stopping that container deleted it
+    "podman-tailscale".serviceConfig.RuntimeDirectory = lib.mkForce "podman-tailscale";
+
+    # the DIMMs forget their colour when the PSU is unplugged, so re-apply "off"
+    # at every boot. Devices 0 and 1 are the two DRAM modules; if enumeration
+    # order ever changes the worst case is that the board headers go dark.
+    openrgb-ram = {
+      description = "switch off the Corsair DIMM RGB";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        ${pkgs.openrgb}/bin/openrgb --noautoconnect -d 0 -m Direct -c 000000 || true
+        ${pkgs.openrgb}/bin/openrgb --noautoconnect -d 1 -m Direct -c 000000 || true
+      '';
+    };
+  };
+
+  # Keep the laptop server running when its lid is closed.
+  services.logind.settings.Login = {
+    HandleLidSwitch = "ignore";
+    HandleLidSwitchExternalPower = "ignore";
+    HandleLidSwitchDocked = "ignore";
+  };
+
+  networking.hostName = "sheldon";
+  time.timeZone = "Asia/Kolkata";
+
+  # AdGuard binds this address explicitly (stacks/adguardhome.nix), so a DHCP
+  # lease that moved would take DNS down with it. Pinned here instead of as a
+  # router reservation so the address is part of the config.
+  #
+  # The name is pinned to the MAC rather than used as enp4s0/enp5s0: predictable
+  # names encode the PCIe bus number, and fitting a second NVMe renumbered the
+  # bus once already, which left the box with no IPv4 at all
+  systemd.network.links."10-lan" = {
+    matchConfig.MACAddress = "30:56:0f:85:2e:07";
+    linkConfig.Name = "lan0";
+  };
+
+  networking.useDHCP = false;
+  networking.interfaces.lan0.useDHCP = false;
+  networking.interfaces.lan0.ipv4.addresses = [
+    {
+      address = "192.168.0.179";
+      prefixLength = 24;
+    }
+  ];
+  networking.defaultGateway = "192.168.0.1";
+  networking.nameservers = [
+    "1.1.1.1"
+    "1.0.0.1"
+  ];
+
+  # This ISP hijacks plain UDP DNS, not just its own resolver: a query sent to
+  # j.root-servers.net for x1337x.cc came back in 2 ms with 202.83.21.15, which
+  # that server does not answer for, while the same lookup over TLS gives
+  # Cloudflare's 104.21.83.238. Every destination on 53/udp is answered by the
+  # ISP, so resolve over TLS, where an injected answer cannot be authenticated.
+  #
+  # unbound lived here for a while and is deliberately gone: as a DoT forwarder
+  # it only added a hop in front of resolved, and as a recursive resolver
+  # (tcp-upstream does dodge the hijack — the interception is UDP-only) it cost
+  # a fresh TCP connection per authoritative server, ~600ms on a cold name.
+  # resolved does the same job with fewer moving parts.
+  #
+  # DNSSEC stays off, as it was before any of this: the answers come from
+  # Cloudflare already validated, and a second validator on the box would only
+  # turn a bad signature into a SERVFAIL this config cannot explain.
+  #
+  # The deploy path uses the IP from ~/.ssh/config, so a resolver outage cannot
+  # lock the box out of itself.
+  services.resolved = {
+    enable = true;
+    settings.Resolve = {
+      DNS = [ "127.0.0.1:5300" ];
+      DNSOverTLS = "no";
+      DNSSEC = "no";
+      Domains = [ "~." ];
+    };
+  };
+
+  services.dnscrypt-proxy = {
+    enable = true;
+    upstreamDefaults = false;
+    settings = {
+      listen_addresses = [ "127.0.0.1:5300" ];
+      ipv4_servers = true;
+      ipv6_servers = true;
+      dnscrypt_servers = true;
+      doh_servers = false;
+      odoh_servers = false;
+      require_dnssec = true;
+      cache = true;
+      ignore_system_dns = true;
+      timeout = 2000;
+      bootstrap_resolvers = [
+        "[2606:4700:4700::1111]:53"
+        "1.1.1.1:53"
+      ];
+      server_names = [
+        "dnscry.pt-mumbai02-ipv4"
+        "dnscry.pt-bengaluru-ipv4"
+      ];
+      static."dnscry.pt-mumbai02-ipv4".stamp = "sdns://AQcAAAAAAAAADDE1Ny4yMC4yNy43OSCWqeT_u1nn0f3mZBAXCN7K40kyMWyMgma2VqLqJhijIhkyLmRuc2NyeXB0LWNlcnQuZG5zY3J5LnB0";
+      static."dnscry.pt-bengaluru-ipv4".stamp = "sdns://AQcAAAAAAAAADzE2MC4xOTEuMTgyLjIxNiDM3lhIXzCtFbHampFM4K_NDUnKalgxd72L-5ye1X4qExkyLmRuc2NyeXB0LWNlcnQuZG5zY3J5LnB0";
+      static."dnscry.pt-anon-bengaluru-ipv4".stamp = "sdns://gQ8xNjAuMTkxLjE4Mi4yMTY";
+      static."dnscry.pt-anon-bengaluru-ipv6".stamp = "sdns://gRZbMjQwMTpkNGUwOjE6ZjdmZDo6NTNd";
+      static."dnscry.pt-anon-mumbai02-ipv4".stamp = "sdns://gQwxNTcuMjAuMjcuNzk";
+      static."dnscry.pt-anon-mumbai02-ipv6".stamp = "sdns://gRFbMjYwMjpmYTA4OjU6Ojc1XQ";
+      anonymized_dns.routes = [
+        {
+          server_name = "dnscry.pt-bengaluru-ipv4";
+          via = [
+            "dnscry.pt-anon-mumbai02-ipv4"
+            "dnscry.pt-anon-mumbai02-ipv6"
+          ];
+        }
+        {
+          server_name = "dnscry.pt-mumbai02-ipv4";
+          via = [
+            "dnscry.pt-anon-bengaluru-ipv4"
+            "dnscry.pt-anon-bengaluru-ipv6"
+          ];
+        }
+      ];
+    };
+  };
+
+  # HA's bluetooth integration talks to bluetoothd over D-Bus; without this the
+  # radio shows up as hci0 but nothing can manage it
+  hardware.bluetooth = {
+    enable = true;
+    powerOnBoot = true;
+  };
+
+  # the media stack's tailscale sidecar runs with --device /dev/net/tun; the
+  # device only appears once the module is loaded, and without it podman fails
+  # to create the container (exit 125) and the whole activation rolls back
+  # tun: the media stack's tailscale sidecar. i2c: OpenRGB reaches the Corsair
+  # DIMMs' RGB controller over the SMBus, which only works once the kernel stops
+  # honouring ACPI's claim on that region — hence the kernel parameter. Without
+  # it i2c-piix4 loads but finds no devices at all (decode-dimms sees 0 DIMMs).
+  boot.kernelModules = [
+    "tun"
+    "i2c-dev"
+    "i2c-piix4"
+  ];
+  boot.kernelParams = [
+    "acpi_enforce_resources=lax"
+    "slab_nomerge"
+    "page_alloc.shuffle=1"
+  ];
+
+  # fish is the login shell, same as the Mac. The NixOS module is needed as
+  # well: it puts fish in /etc/shells and writes /etc/fish/config.fish, while
+  # home-manager only writes the user's own config.
+  programs.fish.enable = true;
+
+  environment.systemPackages = [
+    pkgs.openrgb
+    # neofetch is gone from nixpkgs (unmaintained upstream); fastfetch is the
+    # maintained successor. `neowofetch` from the hyfetch package is the
+    # faithful look-alike if that is what you want instead.
+    pkgs.fastfetch
+  ];
+
+  # the box is UEFI: ESP on nvme0n1p1. This cannot live in hardware.nix because
+  # `make bootstrap` regenerates that file from nixos-generate-config, which
+  # emits no bootloader settings at all
+  boot.loader = {
+    systemd-boot.enable = true;
+    efi.canTouchEfiVariables = true;
+    # memtest86+ in the boot menu: the only way to cover every cell of the 32G
+    # kit, which memtester inside the running system cannot do
+    systemd-boot.memtest86.enable = true;
+    # the ESP is only 511M and every generation adds a bootloader entry, so cap
+    # them rather than letting twenty pile up
+    systemd-boot.configurationLimit = 2;
+  };
+
+  # Public key from ~/.ssh/id_ed25519.pub.
+  users.users.karthihegde = {
+    isNormalUser = true;
+    shell = pkgs.fish;
+    extraGroups = [
+      "wheel"
+      "podman"
+    ];
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAGr/+1tTfIpSiuqynYksdJS/5dYoDiuGTtbLa8KRjsZ harshith@nothr.in"
+    ];
+  };
+
+  services.openssh.enable = true;
+  security.sudo.wheelNeedsPassword = true;
+  security.sudo.extraRules = [
+    {
+      users = [ "karthihegde" ];
+      commands = [
+        {
+          command = "ALL";
+          options = [ "NOPASSWD" ];
+        }
+      ];
+    }
+  ];
+
+  # SSH extras from the hardening checklist. The rest of it (no password auth,
+  # no root login, MaxAuthTries 3, modern kex/ciphers, AllowUsers) is already
+  # on; AllowTcpForwarding stays enabled on purpose.
+  services.openssh.settings = {
+    AllowAgentForwarding = false;
+    PermitTunnel = "no";
+    ClientAliveInterval = 300;
+    ClientAliveCountMax = 2;
+  };
+
+  # Kernel/network hardening from the same checklist. rp_filter is deliberately
+  # NOT set: tailscale needs asymmetric routing to work.
+  boot.kernel.sysctl = {
+    "kernel.kptr_restrict" = 2;
+    "kernel.dmesg_restrict" = 1;
+    "kernel.yama.ptrace_scope" = 1;
+    "kernel.perf_event_paranoid" = 3;
+    "kernel.kexec_load_disabled" = 1;
+    "kernel.unprivileged_bpf_disabled" = 1;
+    "net.ipv4.conf.all.accept_redirects" = 0;
+    "net.ipv4.conf.all.send_redirects" = 0;
+    "net.ipv4.conf.all.accept_source_route" = 0;
+    "net.ipv4.conf.default.accept_source_route" = 0;
+    "net.ipv4.icmp_echo_ignore_broadcasts" = 1;
+    "net.ipv4.tcp_syncookies" = 1;
+    "net.ipv4.tcp_rfc1337" = 1;
+  };
+
+  # no firewire on this box, and these four are only ever loaded by an attacker
+  # or a very exotic client; nothing here uses them
+  boot.blacklistedKernelModules = [
+    "dccp"
+    "sctp"
+    "rds"
+    "tipc"
+    "firewire-core"
+    "firewire-ohci"
+    "firewire-sbp2"
+  ];
+
+  services.tailscale.enable = true;
+
+  nix.settings = {
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
+    trusted-users = [
+      "root"
+      "@wheel"
+    ];
+  };
+
+  # stacks publish host ports; the firewall opens each one in its own module
+  networking.firewall.enable = true;
+
+  # The 1 TB Crucial P3 that used to boot archmaestro: all container state and
+  # the media library live there, so the Verbatim is boot-only. Two subvolumes
+  # of one filesystem, so a runaway download cannot fill the filesystem
+  # Postgres lives on. Deliberately no `nofail`: if this disk is missing, the
+  # containers must fail to start rather than come up against empty state.
+  fileSystems."/var/lib/stacks" = {
+    device = "/dev/disk/by-uuid/fa207171-ce84-40fc-b066-19f2736aca45";
+    fsType = "btrfs";
+    options = [
+      "subvol=@stacks"
+      "compress=zstd"
+      "noatime"
+    ];
+  };
+
+  # One SOPS-encrypted dotenv file per stack (devices/sheldon/nix/secrets/<stack>.env),
+  # decrypted at activation into /run/secrets/<stack> and handed to the
+  # container as an environment file. Same age key as the Mac; put it at
+  # /var/lib/sops-nix/key.txt on sheldon.
+  sops = {
+    # install secrets from a systemd unit, not from the activation script: the
+    # activation hook is deprecated in 26.05 and removed in 26.11, and it is
+    # what writes /run/nixos/activation-restart-list
+    useSystemdActivation = true;
+    age.keyFile = "/var/lib/sops-nix/key.txt";
+    # builds shouldn't need the private key just to evaluate the config
+    validateSopsFiles = false;
+    secrets = lib.genAttrs [
+      "beszel"
+      "beszel-agent"
+      "caddy"
+      "gatus"
+      "media"
+      "obsidian"
+      "searchxng"
+      "shiori"
+      "tangled"
+      "tangled-knot"
+    ] (name: {
+      sopsFile = ./secrets/${name}.env;
+      format = "dotenv";
+      mode = "0400";
+    });
+  };
+
+  # data that used to be `./config`, `./data` next to each compose file lives
+  # here now, one directory per stack, created by that stack's module
+  environment.etc."stacks/README".text = ''
+    /var/lib/stacks/<stack>/  persistent data, one dir per stack
+    secrets come from sops: devices/sheldon/nix/secrets/<stack>.env -> /run/secrets/<stack>
+  '';
+
+  system.stateVersion = "26.05";
+}
