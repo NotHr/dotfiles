@@ -1,30 +1,26 @@
 # Dotfiles
 
-Per-device Nix flakes, following dracarys18/dotfiles.
+NixOS and Home Manager configurations, based on [dracarys18/dotfiles](https://github.com/dracarys18/dotfiles).
 
-- `devices/notebook/nix/`: existing notebook system and Home Manager configuration, moved unchanged.
-- `devices/sheldon/nix/`: upstream home server, copied from commit `c55f78b292dc9cf05d5f10a358b90f6eabd395de`.
-- `config/`: upstream application configuration files.
-- Root `flake.nix`: compatibility entry point for `#notebook`.
-- `backups/` and the pre-existing `nixos/` directory: left untouched.
+## Layout
 
-## Notebook
+- `devices/notebook/nix/` — notebook configuration (default).
+- `devices/sheldon/nix/` — home server reference configuration.
+- `config/` — application configs.
+- `flake.nix` — compatibility entry point for `#notebook`.
+- `nixos/`, `backups/` — previous configuration and backups.
+
+## Usage
 
 ```sh
-make check
-make build
-make switch
-make update
+make check   # validate
+make build   # build without activating
+make switch  # build and activate
+make update  # update flake inputs
 ```
 
-## Home server
+Select another device with `HOST=<name>`.
 
-The server is a reference copy, NOT ready to deploy to your hardware. Before using
-`make build HOST=sheldon` or `make switch HOST=sheldon`, replace `hardware.nix`,
-review disks, networking, firewall, domains, user `karthihegde`, SSH keys and
-service paths. Replace the encrypted files in `secrets/` with your own secrets
-and configure your own sops recipients and age key. The upstream ciphertext
-cannot be decrypted without the author's private key. Deployment settings in
-its flake also target the author's host/user.
-
-No rebuild or activation was performed during migration.
+> `sheldon` is an upstream reference, not deployment-ready. Replace hardware,
+> users, SSH keys, secrets and deployment settings; review disks, networking
+> and services before use. Its encrypted secrets require the original author's key.
